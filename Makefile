@@ -39,7 +39,7 @@ $(KERNEL_BIN): kernel
 kernel:
 	@cd ../myuser && make build
 	@echo Platform: $(BOARD)
-	# @cp src/linker-$(BOARD).ld src/linker.ld
+	@cp src/linker-$(BOARD).ld src/linker.ld
 	@cargo build $(MODE_ARG)
 	@rm src/linker.ld
 
