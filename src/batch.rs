@@ -52,8 +52,44 @@ impl AppManager {
         asm!("fence.i");
     }
 
+    unsafe fn load_app_to_specified_place(&self, app_id: usize) {
+        // if app_id >= self.num_app {
+        //     println!("All applications completed!");
+        //     shutdown(false);
+        // }
+        println!("[kernel] Loading app_{}", app_id);
+        // clear app area
+        core::slice::from_raw_parts_mut((APP_BASE_ADDRESS + app_id * 0x0020000) as *mut u8, APP_SIZE_LIMIT).fill(0);
+        let app_src = core::slice::from_raw_parts(
+            self.app_start[app_id] as *const u8,
+            self.app_start[app_id + 1] - self.app_start[app_id],
+        );
+        let app_dst = core::slice::from_raw_parts_mut((APP_BASE_ADDRESS + app_id * 0x0020000) as *mut u8, app_src.len());
+        println!("app_{} start from {:x}", app_id, APP_BASE_ADDRESS + app_id * 0x0020000);
+        app_dst.copy_from_slice(app_src);
+        // Memory fence about fetching the instruction memory
+        // It is guaranteed that a subsequent instruction fetch must
+        // observes all previous writes to the instruction memory.
+        // Therefore, fence.i must be executed after we have loaded
+        // the code of the next app into the instruction memory.
+        // See also: riscv non-priv spec chapter 3, 'Zifencei' extension.
+        asm!("fence.i");
+    }
+
     pub fn get_current_app(&self) -> usize {
+        if self.current_app >= self.num_app {
+            println!("All applications completed! {}/{}", self.current_app, self.num_app);
+            shutdown(false);
+        }
         self.current_app
+    }
+
+    pub fn load_apps(&self) {
+        for i in 0..self.num_app {
+            unsafe {
+                self.load_app_to_specified_place(i)
+            }
+        }
     }
 
     pub fn move_to_next_app(&mut self) {
@@ -122,6 +158,8 @@ impl UserStack {
 /// init batch subsystem
 pub fn init() {
     print_app_info();
+    let mut app_manager = APP_MANAGER.exclusive_access();
+    app_manager.load_apps();
 }
 
 /// print apps info
@@ -133,9 +171,6 @@ pub fn print_app_info() {
 pub fn run_next_app() -> ! {
     let mut app_manager = APP_MANAGER.exclusive_access();
     let current_app = app_manager.get_current_app();
-    unsafe {
-        app_manager.load_app(current_app);
-    }
     app_manager.move_to_next_app();
     drop(app_manager);
     // before this we have to drop local variables related to resources manually
@@ -145,7 +180,7 @@ pub fn run_next_app() -> ! {
     }
     unsafe {
         __restore(KERNEL_STACK.push_context(TrapContext::app_init_context(
-            APP_BASE_ADDRESS,
+            APP_BASE_ADDRESS + current_app * 0x0020000,
             USER_STACK.get_sp(),
         )) as *const _ as usize);
     }
